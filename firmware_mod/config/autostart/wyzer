@@ -1,0 +1,84 @@
+#!/bin/sh
+
+##################################################
+#   _    _  _  _  ____  ____    __    ___  ___   #
+#  ( \/\/ )( \/ )(_   )( ___)  /__\  / __)/ __)  #
+#   )    (  \  /  / /_  )__)  /(__)\ \__ \\__ \  #
+#  (__/\__) (__) (____)(____)(__)(__)(___/(___/  #
+#                                                #
+ #                                              #
+  ##############################################
+ # This script is intended to make up for some  #
+# of the many quirks found in the Wyze v2 Dafang #
+# firmware hack.  We're going to utilize CRON to #
+# try and make sure we're always up and running! #
+##################################################
+#           THIS SCRIPT RUNS JUST ONCE!          #
+##################################################
+
+TEST=$(cat /system/sdcard/controlscripts/rtsp | grep 8080)
+if [ "${TEST}" == "" ]; then
+    sed -i 's/-P/-p 8080 -P/g' /system/sdcard/controlscripts/rtsp
+fi
+cat > /system/sdcard/config/cron/periodic/15min/chkonvif << "EOF"
+#!/bin/sh
+/system/sdcard/controlscripts/chkonvif &
+EOF
+cat > /system/sdcard/config/cron/periodic/15min/chkdos << "EOF"
+#!/bin/sh
+/system/sdcard/controlscripts/chkdos &
+EOF
+cat > /system/sdcard/config/cron/periodic/hourly/settime << "EOF"
+#!/bin/sh
+[ "$(pidof ntpd)" == "" ] && ntpd -N -q -p $(cat /system/sdcard/config/ntp_srv.conf) &
+EOF
+cat > /system/sdcard/config/cron/periodic/daily/reboot << "EOF"
+#!/bin/sh
+reboot
+EOF
+
+cat > /system/sdcard/controlscripts/chkonvif << "EOF"
+#!/bin/sh
+TEST=$(ps -a | grep chkonvif | grep -v grep | grep loop)
+if [ "${TEST}" == "" ]; then
+	/system/sdcard/controlscripts/chkonvif loop &
+fi
+[ "${1}" == "" ] && exit
+while [ true ]
+do
+	PID=$(pidof onvif_srvd)
+	if [ "${PID}" == "" ]; then
+		[ -f /var/run/onvif_srvd.pid ] && rm /var/run/onvif_srvd.pid -f
+		killall v4l2rtspserver-master >/dev/null 2>&1
+		/system/sdcard/controlscripts/onvif-srvd &
+		/system/sdcard/controlscripts/rtsp &
+	fi
+	sleep 10; # chkonvif
+done
+EOF
+
+cat > /system/sdcard/controlscripts/chkdos << "EOF"
+#!/bin/sh
+TEST1=$(dosfsck -n /dev/mmcblk0p1 2>/dev/null | grep -v CP850 | grep dirty)
+[ ! "${TEST1}" == "" ] && dosfsck -a /dev/mmcblk0p1 2>/dev/null && sleep 1
+[ ! "${TEST1}" == "" ] && mount -o remount,rw /system/sdcard && sleep 1
+
+TEST2=$(dosfsck -n /dev/mmcblk0p1 2>/dev/null | grep -v CP850 | grep dirty)
+if [ ! "${TEST3}" == "" ]; then
+	if [ ! -f /system/sdcard/.reboot ]; then
+		touch /system/sdcard/.reboot
+		reboot; exit
+	else
+		exit
+	fi
+fi
+rm /system/sdcard/.reboot -f
+EOF
+
+cat > /system/sdcard/config/autostart/wyze << "EOF"
+#!/bin/sh
+/system/sdcard/controlscripts/chkdos &
+/system/sdcard/controlscripts/chkonvif &
+EOF
+
+rm /system/sdcard/config/autostart/wyzer -f
